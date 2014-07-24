@@ -1,0 +1,258 @@
+---
+title: "Practical Machine Learning Project"
+author: "Todd Knutson"
+date: "July 22, 2014"
+output:
+  html_document:
+    fig_height: 6
+    fig_width: 6
+    keep_md: yes
+    number_sections: yes
+    toc: yes
+---
+# Introduction
+"Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz38Egi8PXw"
+
+
+
+Six different weight lifters (user_name) were monitored completing the exercise in five different weight lifting styles (classe) labeled: A-E. Class A style is the correct way to complete the exercise, and classes B-E are common mistakes.
+
+
+
+# Results
+Here, I will start the analsis.
+
+
+## Data Processing
+
+### Download Data
+
+```{r cache = TRUE}
+# Create directory for raw data download
+if(!file.exists("Raw Data")){
+  dir.create("Raw Data")
+}
+# Download raw data from Coursera website
+trainUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(trainUrl, destfile = "./Raw Data/train.csv", method = "curl")
+download.file(testUrl, destfile = "./Raw Data/test.csv", method = "curl")
+list.files("./Raw Data")
+dateDownloaded <- date()
+dateDownloaded
+```
+
+### Import Data
+
+Load the data into R.
+```{r}
+train <- read.csv("Raw Data/train.csv", header = TRUE, na.strings = "", colClasses = "character", row.names = 1)
+test <- read.csv("Raw Data/test.csv", header = TRUE, na.strings = "", colClasses = "character", row.names = 1)
+```
+
+
+
+
+
+Look at the dimensions of both training and test data sets. The test data should have the same number of variables (160), but many fewer observations.
+```{r}
+dim(train); dim(test)
+```
+
+
+
+
+Clean the raw training data to make it tidy. Identify variables with missing values and remove them. 
+```{r}
+# Keep first 6 columns as "character"" class, and the rest "numeric"" class
+train_tidy <- cbind(train[, 1:5], sapply(train[, 6:158], as.numeric))
+
+# Add back the "classe" variable
+train_tidy$classe <- factor(train$classe)
+# Convert variables to factors
+train_tidy$user_name <- factor(train_tidy$user_name)
+train_tidy$raw_timestamp_part_1 <- factor(train_tidy$raw_timestamp_part_1)
+train_tidy$raw_timestamp_part_2 <- factor(train_tidy$raw_timestamp_part_2)
+train_tidy$new_window <- factor(train_tidy$new_window)
+train_tidy$cvtd_timestamp <- NULL
+
+# For each variable, determine the number of NA values in each column
+na <- vector()
+for (i in 1:length(colnames(train_tidy))) {
+na[i] <- length(which(is.na(train_tidy[, i])))
+}
+# Print the vector listing the number of NA values
+na 
+
+# Remove variables (columns) from training data with lots of NA values
+train_tidy <- train_tidy[, na == 0]
+```
+
+
+Examine the training data variables. Indeed, six participants were measured completing the exercises in five different styles (A-E), with an approximatley equal number of observations per person and lifting style.
+```{r}
+table(train_tidy$user_name); table(train_tidy$classe)
+```
+
+
+
+
+
+Explore the variables in the data
+```{r}
+featurePlot(x = train_tidy[, c("roll_belt", "pitch_belt", "yaw_belt")], y = train_tidy$classe, plot = "pairs")
+featurePlot(x = train_tidy[, c("gyros_belt_x", "gyros_belt_y", "gyros_belt_z")], y = train_tidy$classe, plot = "pairs")
+featurePlot(x = train_tidy[, c("accel_belt_x", "accel_belt_y", "accel_belt_z")], y = train_tidy$classe, plot = "pairs")
+
+  
+featurePlot(x = train_tidy[, c("roll_arm", "pitch_arm", "yaw_arm")], y = train_tidy$classe, plot = "pairs")
+
+featurePlot(x = train_tidy[, c("roll_dumbbell", "pitch_dumbbell", "yaw_dumbbell")], y = train_tidy$classe, plot = "pairs")
+
+featurePlot(x = train_tidy[, c("roll_forearm", "pitch_forearm", "yaw_forearm")], y = train_tidy$classe, plot = "pairs")
+
+
+magnet_belt_x    magnet_belt_y	magnet_belt_z
+
+
+roll_arm    pitch_arm	yaw_arm
+gyros_arm_x    gyros_arm_y	gyros_arm_z
+accel_arm_x    accel_arm_y	accel_arm_z
+magnet_arm_x    magnet_arm_y	magnet_arm_z
+
+roll_dumbbell    pitch_dumbbell	yaw_dumbbell
+gyros_dumbbell_x    gyros_dumbbell_y	gyros_dumbbell_z
+accel_dumbbell_x    accel_dumbbell_y	accel_dumbbell_z
+magnet_dumbbell_x    magnet_dumbbell_y	magnet_dumbbell_z
+
+roll_forearm    pitch_forearm	yaw_forearm
+gyros_forearm_x    gyros_forearm_y	gyros_forearm_z
+accel_forearm_x    accel_forearm_y	accel_forearm_z
+magnet_forearm_x    magnet_forearm_y	magnet_forearm_z
+
+
+
+```
+
+
+### Subset the training data for cross validation
+
+
+The training data will be split into two groups, one group for creating the prediction model and the other for cross validation. A random sampling method will be used to split the training data into these two groups, where the model will be built for the sub-training set, and tested to predict on the sub-testing set. The process will be repeated multiple times and the prediction model error will be averaged among each cross validation iteration. For each iteration of training data subsetting, both sets will contain equal proportions of each exercise style (A-E). 
+```{r}
+
+
+vars <- c("user_name", "roll_belt", "pitch_belt", "yaw_belt", "roll_arm", "pitch_arm", "yaw_arm", "classe")
+
+
+library(caret)
+# Iteration 1
+set.seed(12345)
+inTrain1 <- createDataPartition(train_tidy$classe, p = 3/4, list = FALSE)
+sub_train1 <- train_tidy[inTrain1, ]
+sub_test1 <- train_tidy[-inTrain1, ]
+
+remove <- c(1:5)
+sub_train1 <- sub_train1[, -remove]
+sub_test1 <- sub_test1[, -remove]
+
+
+
+# Iteration 2
+set.seed(79834)
+inTrain2 <- createDataPartition(train_tidy$classe, p = 3/4, list = FALSE)
+sub_train2 <- train_tidy[inTrain2, ]
+sub_test2 <- train_tidy[-inTrain2, ]
+
+# Iteration 3
+set.seed(23945)
+inTrain3 <- createDataPartition(train_tidy$classe, p = 3/4, list = FALSE)
+sub_train3 <- train_tidy[inTrain3, ]
+sub_test3 <- train_tidy[-inTrain3, ]
+
+
+# Iteration 4
+set.seed(12063)
+inTrain4 <- createDataPartition(train_tidy$classe, p = 3/4, list = FALSE)
+sub_train4 <- train_tidy[inTrain4, ]
+sub_test4 <- train_tidy[-inTrain4, ]
+
+
+# Iteration 5
+set.seed(1293)
+inTrain5 <- createDataPartition(train_tidy$classe, p = 3/4, list = FALSE)
+sub_train5 <- train_tidy[inTrain5, ]
+sub_test5 <- train_tidy[-inTrain5, ]
+
+
+```
+
+
+
+
+
+
+
+
+
+
+## Build Prediction Model
+
+```{r}
+
+# Create a training data set consisting of only the predictors with variable names beginning with IL and the diagnosis. Build two predictive models, one using the predictors as they are and one using PCA with principal components explaining 80% of the variance in the predictors. Use method="glm" in the train function. What is the accuracy of each method in the test set? Which is more accurate?
+
+library(caret)
+#library(AppliedPredictiveModeling)
+
+
+modlda = train(classe ~ .,data=sub_train1,method="lda")
+modnb = train(classe ~ ., data=sub_train1,method="nb")
+plda = predict(modlda,sub_test1)
+pnb = predict(modnb,sub_test1)
+table(plda,pnb)
+
+equalPredictions = (plda==pnb)
+qplot(roll_belt,roll_arm,colour=equalPredictions,data=sub_test1)
+
+confusionMatrix(sub_test1$classe, predict(modlda,sub_test1))
+confusionMatrix(sub_test1$classe, predict(modnb,sub_test1))
+
+
+
+# ---------------------------------------------------------------------
+
+
+preProc <- preProcess(sub_train1[, -53], method = "pca", thresh = 0.8)
+
+
+trainPC <- predict(preProc, sub_train1[, -53])
+library(e1071)
+modelFit_train <- train(sub_train1$classe ~ ., method = "gbm", data = trainPC)
+
+testPC <- predict(preProc, sub_test1[, -53])
+train_predict = predict(modelFit_train,sub_test1)
+confusionMatrix(sub_test1$classe, predict(modelFit_train, testPC))
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+# Conclusions
+
+# References
+Citation for original experiment and source files: http://groupware.les.inf.puc-rio.br/har
+
+
+
