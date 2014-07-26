@@ -1,6 +1,5 @@
 ---
-title: "Practical Machine Learning Project"
-author: "Todd Knutson"
+title: "Using Machine Learning to Predict Correct Weightlifting Form"
 date: "July 22, 2014"
 output:
   html_document:
@@ -11,9 +10,13 @@ output:
     toc: yes
 ---
 # Introduction
-"Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
 
-Read more: http://groupware.les.inf.puc-rio.br/har#ixzz38Egi8PXw"
+In recent years, many new personal activity devices have been used by persons interested in tracking their movement over the course of the day. In this study, we will utilize these types of devices (accelerometers) to investigate movement data from a person performing a dumbbell weightlifting exercise. Six volunteers wore four accelerometers strapped to the dumbbell, forearm, upper-arm, and belt while performing the exercise. The volunteers completed the Unilateral Dumbbell Biceps Curl in five different fashions: (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).   
+
+We will use this data to train a machine learning algorithm that can predict which version of the exercise (A-E) that 20 unknown test subjects completed.   
+
+First, we will import the training and test datasets provided, subset the training data into sub-training and sub-testing sets for cross validation, and finally train a boosting algorithm using tree classification on the sub-training data. After adjusting the algorithm and estimating the out-of-sample error based on cross validation, the classifier will be used on the test data. The predictions will be submitted for evaluation.
+
 
 
 
@@ -22,7 +25,7 @@ Six different weight lifters (user_name) were monitored completing the exercise 
 
 
 # Results
-Here, I will start the analsis.
+
 
 
 ## Data Processing
@@ -46,7 +49,7 @@ dateDownloaded
 
 ### Import Data
 
-Load the data into R.
+Load the two provided datasets into R.
 ```{r}
 train <- read.csv("Raw Data/train.csv", header = TRUE, na.strings = "", colClasses = "character", row.names = 1)
 test <- read.csv("Raw Data/test.csv", header = TRUE, na.strings = "", colClasses = "character", row.names = 1)
@@ -56,22 +59,24 @@ test <- read.csv("Raw Data/test.csv", header = TRUE, na.strings = "", colClasses
 
 
 
-Look at the dimensions of both training and test data sets. The test data should have the same number of variables (160), but many fewer observations.
+Look at the dimensions of both training and test datasets. The test data should have the same number of variables (159), but many fewer observations.
 ```{r}
 dim(train); dim(test)
 ```
 
 
 
-
+### Make Training Data Tidy
 Clean the raw training data to make it tidy. Identify variables with missing values and remove them. 
 ```{r}
-# Keep first 6 columns as "character"" class, and the rest "numeric"" class
+# Set options to a negative number so warning messages are not printed (warnings will occur due to numeric coercion below)
+options(warn = -1)
+# Keep first 6 columns as "character" class, and the rest "numeric"" class
 train_tidy <- cbind(train[, 1:5], sapply(train[, 6:158], as.numeric))
 
-# Add back the "classe" variable
+# Add the "classe" variable back to the dataset as a factor
 train_tidy$classe <- factor(train$classe)
-# Convert variables to factors
+# Convert other variables to factors
 train_tidy$user_name <- factor(train_tidy$user_name)
 train_tidy$raw_timestamp_part_1 <- factor(train_tidy$raw_timestamp_part_1)
 train_tidy$raw_timestamp_part_2 <- factor(train_tidy$raw_timestamp_part_2)
@@ -83,162 +88,170 @@ na <- vector()
 for (i in 1:length(colnames(train_tidy))) {
 na[i] <- length(which(is.na(train_tidy[, i])))
 }
-# Print the vector listing the number of NA values
-na 
+na
 
-# Remove variables (columns) from training data with lots of NA values
+# Keep only variables (columns) from training data without any NA values
 train_tidy <- train_tidy[, na == 0]
 ```
 
 
-Examine the training data variables. Indeed, six participants were measured completing the exercises in five different styles (A-E), with an approximatley equal number of observations per person and lifting style.
+Examine the final training data variables. Indeed, six participants were measured completing the exercises in five different styles (A-E), with an approximately equal number of observations per person and lifting style.
 ```{r}
 table(train_tidy$user_name); table(train_tidy$classe)
 ```
 
 
 
+### Explore the variables
 
-
-Explore the variables in the data
+Explore the variables in the data. Make a few plots comparing the numeric accelerator variables to the weightlifting class variable. Look for possible correlations between these variables that may suggest good predictor variables of the weightlifting class. There appears to be some unique clusters of points between the measurement variables and the class variable, especially in the "arm" and "forearm" variables. These will likely contribute more information in the classifier training.
 ```{r}
-featurePlot(x = train_tidy[, c("roll_belt", "pitch_belt", "yaw_belt")], y = train_tidy$classe, plot = "pairs")
-featurePlot(x = train_tidy[, c("gyros_belt_x", "gyros_belt_y", "gyros_belt_z")], y = train_tidy$classe, plot = "pairs")
-featurePlot(x = train_tidy[, c("accel_belt_x", "accel_belt_y", "accel_belt_z")], y = train_tidy$classe, plot = "pairs")
-
-  
-featurePlot(x = train_tidy[, c("roll_arm", "pitch_arm", "yaw_arm")], y = train_tidy$classe, plot = "pairs")
-
-featurePlot(x = train_tidy[, c("roll_dumbbell", "pitch_dumbbell", "yaw_dumbbell")], y = train_tidy$classe, plot = "pairs")
-
-featurePlot(x = train_tidy[, c("roll_forearm", "pitch_forearm", "yaw_forearm")], y = train_tidy$classe, plot = "pairs")
+library(caret)
+p1 <- featurePlot(x = train_tidy[, c("roll_belt", "pitch_belt", "yaw_belt")], y = train_tidy$classe, plot = "pairs") 
+p2 <- featurePlot(x = train_tidy[, c("roll_arm", "pitch_arm", "yaw_arm")], y = train_tidy$classe, plot = "pairs")
+p3 <- featurePlot(x = train_tidy[, c("roll_dumbbell", "pitch_dumbbell", "yaw_dumbbell")], y = train_tidy$classe, plot = "pairs")
+p4 <- featurePlot(x = train_tidy[, c("roll_forearm", "pitch_forearm", "yaw_forearm")], y = train_tidy$classe, plot = "pairs")
+library(gridExtra)
+grid.arrange(p1, p2, p3, p4, ncol = 2, main = "Comparison of Accelerometer Variables\n(colored by weightlifting class variable)")
 
 
-magnet_belt_x    magnet_belt_y	magnet_belt_z
+```
 
 
-roll_arm    pitch_arm	yaw_arm
-gyros_arm_x    gyros_arm_y	gyros_arm_z
-accel_arm_x    accel_arm_y	accel_arm_z
-magnet_arm_x    magnet_arm_y	magnet_arm_z
+## Build a Prediction Model
 
-roll_dumbbell    pitch_dumbbell	yaw_dumbbell
-gyros_dumbbell_x    gyros_dumbbell_y	gyros_dumbbell_z
-accel_dumbbell_x    accel_dumbbell_y	accel_dumbbell_z
-magnet_dumbbell_x    magnet_dumbbell_y	magnet_dumbbell_z
 
-roll_forearm    pitch_forearm	yaw_forearm
-gyros_forearm_x    gyros_forearm_y	gyros_forearm_z
-accel_forearm_x    accel_forearm_y	accel_forearm_z
-magnet_forearm_x    magnet_forearm_y	magnet_forearm_z
+The training data will be split into two groups, one group for training the prediction model and the other for cross validation to estimate the out-of-sample error. A *random sampling* method will be used to split the training data into these two groups, where the model will be built using the sub-training set, and tested on the sub-testing set. The process will be repeated multiple times and the prediction model error will be averaged among each cross validation iteration. For each subsetting iteration of training data, both sets will contain equal proportions of each exercise style (A-E).    
+
+In our preliminary plotting, looking for correlated variables, we did not find any strong single predictor variables, we will consolidate all variables using Principal Components Analysis (PCA). Within each iteration of the cross validation, all the numeric variables will first be pre-processed using PCA, with a threshold setting to capture 90% of the variability in the variables. Then, using the resulting PCA variables, a boosting model will be fitted using trees via the "gbm" package. The results from our cross validation will be collected an a confusion matrix can be analyzed.   
+```{r, cache = TRUE}
+library(caret)
+library(gbm)
+
+# Create empty lists to collect results from loop
+inTrain <- list()
+sub_train <- list()
+sub_test <- list()
+preProc <- list()
+trainPC <- list()
+modelFit_train <- list()
+testPC <- list()
+results <- list()
+# Loop the number of times cross validation should occur
+#i = 1
+for (i in 1:2) {
+    # For cross validation, subsplit training data into new groups: sub_train and sub_test 
+    set.seed(25 * i)
+    inTrain[[i]] <- createDataPartition(train_tidy$classe, p = 3/4, list = FALSE)
+    sub_train[[i]] <- train_tidy[inTrain[[i]], ]
+    sub_test[[i]] <- train_tidy[-inTrain[[i]], ]
+
+    metadata_cols <- c(1:5)
+    sub_train[[i]] <- sub_train[[i]][, -metadata_cols]
+    sub_test[[i]] <- sub_test[[i]][, -metadata_cols]
+    
+
+    # Preprocess data using principal componenets
+    # Column 53 contains the variable we wish to predict (classe) and will be removed
+    preProc[[i]] <- preProcess(sub_train[[i]][, -53], method = "pca", thresh = 0.9)
+    trainPC[[i]] <- predict(preProc[[i]], sub_train[[i]][, -53])
+    
+    
+    
+    
+    # Prediction using boosting with trees
+    # Fit the model
+    modelFit_train[[i]] <- train(sub_train[[i]][, "classe"] ~ ., method = "gbm", data = trainPC[[i]], verbose = FALSE)
+    # Calculate get the principal componenets for the sub_test set
+    testPC[[i]] <- predict(preProc[[i]], sub_test[[i]][, -53])
+    # Calculate predictions on the sub_test set
+    results[[i]] <- confusionMatrix(sub_test[[i]][, "classe"], predict(modelFit_train[[i]], testPC[[i]]))
+
+}
+
 
 
 
 ```
 
 
-### Subset the training data for cross validation
+### Estimate Out-of-Sample Error
 
-
-The training data will be split into two groups, one group for creating the prediction model and the other for cross validation. A random sampling method will be used to split the training data into these two groups, where the model will be built for the sub-training set, and tested to predict on the sub-testing set. The process will be repeated multiple times and the prediction model error will be averaged among each cross validation iteration. For each iteration of training data subsetting, both sets will contain equal proportions of each exercise style (A-E). 
+Compare the cross validated results from the sub-test groups. Find the *mean* Accuracy, Sensitivity, and Specificity from each cross validation iteration on the sub-test data.
 ```{r}
 
+sub_test_accuracy <- mean(c(results[[1]]$overall[1], results[[2]]$overall[1]))
+sub_test_sensitivity <- apply(data.frame(results[[1]]$byClass[, 1], results[[2]]$byClass[, 1]), 1, mean)
+sub_test_specificity <- apply(data.frame(results[[1]]$byClass[, 2], results[[2]]$byClass[, 2]), 1, mean)
+# Print out these values
+sub_test_accuracy
+sub_test_sensitivity
+sub_test_specificity
+``` 
 
-vars <- c("user_name", "roll_belt", "pitch_belt", "yaw_belt", "roll_arm", "pitch_arm", "yaw_arm", "classe")
 
 
-library(caret)
-# Iteration 1
+After running multiple cross validation prediction examples, the accuracy is approximately 80%, Sensitivity between 70-90% for each weightlifting class, and Specificity between 93-95% for each weightlifting class. With these values, I am comfortable to run my model on the actual test data.
+
+## Run Prediction Model on Test Data
+
+
+### Make Test Data Tidy
+
+```{r}
+
+# Keep first 6 columns as "character"" class, and the rest "numeric"" class
+test_tidy <- cbind(test[, 1:5], sapply(test[, 6:158], as.numeric))
+
+# Add back the "problem_id" variable
+test_tidy$problem_id <- as.integer(test$problem_id)
+# Convert variables to factors
+test_tidy$user_name <- factor(test_tidy$user_name)
+test_tidy$raw_timestamp_part_1 <- factor(test_tidy$raw_timestamp_part_1)
+test_tidy$raw_timestamp_part_2 <- factor(test_tidy$raw_timestamp_part_2)
+test_tidy$new_window <- factor(test_tidy$new_window)
+test_tidy$cvtd_timestamp <- NULL
+
+
+# Keep only the same variables (columns) in the test data that were kept from the training data
+test_tidy <- test_tidy[, na == 0]
+```
+
+### Train model with all training data
+
+```{r}
+# For cross validation, subsplit training data into new groups: sub_train and sub_test 
 set.seed(12345)
-inTrain1 <- createDataPartition(train_tidy$classe, p = 3/4, list = FALSE)
-sub_train1 <- train_tidy[inTrain1, ]
-sub_test1 <- train_tidy[-inTrain1, ]
 
-remove <- c(1:5)
-sub_train1 <- sub_train1[, -remove]
-sub_test1 <- sub_test1[, -remove]
+metadata_cols <- c(1:5)
+final_train <- train_tidy[, -metadata_cols]
+final_test <- test_tidy[, -metadata_cols]
 
+# Preprocess data using principal componenets
+# Column 53 contains the variable we wish to predict (problem_id) and will be removed
+final_preProc <- preProcess(final_train[, -53], method = "pca", thresh = 0.9)
+final_trainPC <- predict(final_preProc, final_train[, -53])
 
-
-# Iteration 2
-set.seed(79834)
-inTrain2 <- createDataPartition(train_tidy$classe, p = 3/4, list = FALSE)
-sub_train2 <- train_tidy[inTrain2, ]
-sub_test2 <- train_tidy[-inTrain2, ]
-
-# Iteration 3
-set.seed(23945)
-inTrain3 <- createDataPartition(train_tidy$classe, p = 3/4, list = FALSE)
-sub_train3 <- train_tidy[inTrain3, ]
-sub_test3 <- train_tidy[-inTrain3, ]
-
-
-# Iteration 4
-set.seed(12063)
-inTrain4 <- createDataPartition(train_tidy$classe, p = 3/4, list = FALSE)
-sub_train4 <- train_tidy[inTrain4, ]
-sub_test4 <- train_tidy[-inTrain4, ]
-
-
-# Iteration 5
-set.seed(1293)
-inTrain5 <- createDataPartition(train_tidy$classe, p = 3/4, list = FALSE)
-sub_train5 <- train_tidy[inTrain5, ]
-sub_test5 <- train_tidy[-inTrain5, ]
-
-
+# Prediction using boosting with trees
+# Fit the model
+final_modelFit_train <- train(final_train[, "classe"] ~ ., method = "gbm", data = final_trainPC, verbose = FALSE)
 ```
 
 
+### Make Predictions on Test Data wtih Model
 
-
-
-
-
-
-
-
-## Build Prediction Model
 
 ```{r}
+# Calculate get the principal componenets for the test set
+final_testPC <- predict(final_preProc, final_test[, -53])
+# Make predictions on the sub_test set
+final_results <- predict(final_modelFit_train, final_testPC)
 
-# Create a training data set consisting of only the predictors with variable names beginning with IL and the diagnosis. Build two predictive models, one using the predictors as they are and one using PCA with principal components explaining 80% of the variance in the predictors. Use method="glm" in the train function. What is the accuracy of each method in the test set? Which is more accurate?
+```
 
-library(caret)
-#library(AppliedPredictiveModeling)
-
-
-modlda = train(classe ~ .,data=sub_train1,method="lda")
-modnb = train(classe ~ ., data=sub_train1,method="nb")
-plda = predict(modlda,sub_test1)
-pnb = predict(modnb,sub_test1)
-table(plda,pnb)
-
-equalPredictions = (plda==pnb)
-qplot(roll_belt,roll_arm,colour=equalPredictions,data=sub_test1)
-
-confusionMatrix(sub_test1$classe, predict(modlda,sub_test1))
-confusionMatrix(sub_test1$classe, predict(modnb,sub_test1))
-
-
-
-# ---------------------------------------------------------------------
-
-
-preProc <- preProcess(sub_train1[, -53], method = "pca", thresh = 0.8)
-
-
-trainPC <- predict(preProc, sub_train1[, -53])
-library(e1071)
-modelFit_train <- train(sub_train1$classe ~ ., method = "gbm", data = trainPC)
-
-testPC <- predict(preProc, sub_test1[, -53])
-train_predict = predict(modelFit_train,sub_test1)
-confusionMatrix(sub_test1$classe, predict(modelFit_train, testPC))
-
-
-
-
+```{r}
+library(knitr)
+kable(data.frame(Unknown = seq(1:20), Prediction = final_results), row.names = NA, align = "c")
 ```
 
 
@@ -251,8 +264,10 @@ confusionMatrix(sub_test1$classe, predict(modelFit_train, testPC))
 
 # Conclusions
 
+In this study, we have utilized a training dataset of persons weightlifting in five different methods (classes A-E). From the training data, we preprocessed the variables using PCA and then employed a machine learning algorithm using boosting with decision trees to create a model. The out-of-sample error was estimated using cross validation within the training data via random sampling method, with about 80% accuracy. Finally, the algorithm was applied to the test dataset of 20 unknowns for prediction. After uploading the results, 15/20 unknowns were correctly identified (75%). This makes sense because the out-of-sample error will almost always be lower than in-sample error (80%). Therefore, with this algorithm, the "fashion" of weightlifting can be predicted with 75% accuracy using the accelerometer variables.
+
 # References
-Citation for original experiment and source files: http://groupware.les.inf.puc-rio.br/har
+Citation for the original experiment and source files: http://groupware.les.inf.puc-rio.br/har
 
 
 
